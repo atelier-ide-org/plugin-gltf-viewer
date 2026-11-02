@@ -5,6 +5,12 @@ set -e
 project="${1:?usage: install.sh <project> [--debug]}"
 here="$(cd "$(dirname "$0")" && pwd)"
 root="$(cd "$here/../.." && pwd)"
+# The plugin is built in the workspace of the IDE: it is the submodule `plugins/gltf-viewer` of
+# atelier-ide-org/app.
+if ! grep -q '^name = "atelier-ide"' "$root/Cargo.toml" 2>/dev/null; then
+    echo "Run this script from plugins/gltf-viewer of atelier-ide-org/app (git clone --recursive)." >&2
+    exit 1
+fi
 # Both at once: the IDE only loads a library built with its own features.
 if [ "$2" = "--debug" ]; then
     profile=debug
