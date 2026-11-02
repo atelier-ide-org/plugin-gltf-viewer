@@ -7,16 +7,17 @@ name: Release
 # repository: that one is the IDE's, which the site links to.
 #
 # A native plugin loads only in the IDE it was built like (same compiler, profile and crates, see
-# atelier-ide-org/plugin-api). So this workflow takes the code of the IDE at the tag of the
-# release, puts the plugin in its `plugins/` folder, a member of its workspace, and runs the very
-# command that built the IDE: the crates the IDE and the plugin share come out the same. The IDE
-# never waits for its plugins: its release is published first, the plugin follows.
+# atelier-ide-org/api). So this workflow takes the build kit of that version of the IDE, which its
+# release shares in `vX.Y.Z/` of the `kits` branch of atelier-ide-org/api (its Cargo.toml,
+# Cargo.lock and rust-toolchain.toml), makes an empty package of it, puts the plugin in its
+# `plugins/` folder, a member of its workspace, and runs the very command that built the IDE: the
+# crates the IDE and the plugin share come out the same. The IDE never waits for its plugins: its
+# release is published first, the plugin follows.
 #
 # Every six hours, it looks for the latest release of the IDE that has no release of this plugin
 # yet. Started by hand, it builds for the version given (again, to replace its files).
 #
-# Secrets (of the organization): READ_TOKEN reads atelier-ide-org/app, which is private;
-# RELEASES_TOKEN writes the releases of atelier-ide-org/releases.
+# Secret (of the organization): ATELIER_RELEASES writes the releases of atelier-ide-org/releases.
 
 on:
   schedule:
@@ -48,11 +49,10 @@ jobs:
     steps:
       - id: tag
         env:
-          GH_TOKEN: ${{ secrets.RELEASES_TOKEN }}
-          READ_TOKEN: ${{ secrets.READ_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
           WANTED: ${{ inputs.tag }}
         run: |
-          # `tag`: the version of the IDE (vX.Y.Z), which is also its tag in atelier-ide-org/app.
+          # `tag`: the version of the IDE (vX.Y.Z).
           if [ -n "$WANTED" ]; then
             tag="$WANTED"
           else
@@ -69,9 +69,9 @@ jobs:
               exit 0
             fi
           fi
-          # The releases before native plugins (0.1.x) have no rust-toolchain.toml.
-          if ! GH_TOKEN="$READ_TOKEN" gh api "repos/atelier-ide-org/app/contents/rust-toolchain.toml?ref=$tag" --silent 2>/dev/null; then
-            echo "$tag has no native plugins: nothing to build."
+          # The releases before native plugins (0.1.x) have no build kit.
+          if ! gh api "repos/atelier-ide-org/api/contents/$tag/Cargo.lock?ref=kits" --silent 2>/dev/null; then
+            echo "$tag has no build kit: nothing to build."
             [ -z "$WANTED" ] || exit 1
             exit 0
           fi
@@ -94,13 +94,18 @@ jobs:
       run:
         shell: bash
     steps:
-      # The IDE at the tag of the release, and this plugin in its `plugins/` folder.
+      # The build kit of the IDE, made an empty package, and this plugin in its `plugins/` folder.
       - uses: actions/checkout@v7
         with:
-          repository: atelier-ide-org/app
-          ref: ${{ needs.find.outputs.tag }}
-          token: ${{ secrets.READ_TOKEN }}
-          path: app
+          repository: atelier-ide-org/api
+          ref: kits
+          path: kits
+          sparse-checkout: ${{ needs.find.outputs.tag }}
+      - name: Kit
+        run: |
+          mkdir -p app/src
+          cp -r "kits/${{ needs.find.outputs.tag }}/." app/
+          echo 'fn main() {}' > app/src/main.rs
       - uses: actions/checkout@v7
         with:
           path: app/plugins/${{ env.PLUGIN }}
@@ -174,7 +179,7 @@ jobs:
           (cd dist && sha256sum "$PLUGIN.atelier-plugin" > "$PLUGIN-SHA256SUMS" && cat "$PLUGIN-SHA256SUMS")
       - name: Publish
         env:
-          GH_TOKEN: ${{ secrets.RELEASES_TOKEN }}
+          GH_TOKEN: ${{ secrets.ATELIER_RELEASES }}
           VERSION: ${{ needs.find.outputs.tag }}
         run: |
           tag="plugins/$PLUGIN/$VERSION"
