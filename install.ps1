@@ -6,15 +6,15 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 $root = Resolve-Path (Join-Path $PSScriptRoot '../..')
-# The plugin is built in the workspace of the IDE: it is the submodule `plugins/gltf-viewer` of
+# The plugin is built in the workspace of the IDE: it is cloned into `plugins/gltf-viewer` of
 # atelier-ide-org/app.
 if (-not (Select-String -Quiet -Path (Join-Path $root 'Cargo.toml') -Pattern '^name = "atelier-ide"')) {
-    throw 'Run this script from plugins/gltf-viewer of atelier-ide-org/app (git clone --recursive).'
+    throw 'Clone this repository into plugins/gltf-viewer of atelier-ide-org/app, then run it from there.'
 }
 Push-Location $root
 try {
     # Both at once: the IDE only loads a library built with its own features.
-    if ($Dev) { cargo build } else { cargo build --release }
+    if ($Dev) { cargo build --workspace } else { cargo build --release --workspace }
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 } finally {
     Pop-Location

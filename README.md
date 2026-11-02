@@ -6,16 +6,23 @@ It was a built-in plugin of the IDE; this repository keeps its history.
 
 ## Install
 
-Each release of Atelier carries this plugin, built with it: take `gltf-viewer-<os>-<arch>` from **the release of the IDE you run**, in [atelier-ide-org/releases](https://github.com/atelier-ide-org/releases/releases), and extract it into `<project>/.atelier/plugins/gltf-viewer/`. In Atelier, open **Plugins**, click **Reload** and enable **3D Model Viewer**.
+Each release of Atelier (from 0.2.0) gets this plugin, built like it: take `gltf-viewer-<os>-<arch>` from **the release of the IDE you run**, in [atelier-ide-org/releases](https://github.com/atelier-ide-org/releases/releases), and extract it into `<project>/.atelier/plugins/gltf-viewer/`. In Atelier, open **Plugins**, click **Reload** and enable **3D Model Viewer**.
 
 A library built anywhere else is refused by the IDE: Rust has no stable ABI, so the plugin must be built by the same compiler, with the same crates and features as the IDE (see [plugin-api](https://github.com/atelier-ide-org/plugin-api)).
 
+## Releases
+
+The IDE never waits for this plugin: its releases are published without it. Then the **Release** workflow of this repository (`.github/workflows/release.yml`, every six hours or by hand for a tag) takes the code of the IDE at the tag of the release, puts the plugin in its `plugins/` folder and runs the command that built the IDE, then adds `gltf-viewer-<os>-<arch>` and `gltf-viewer-SHA256SUMS` to that release. The crates the IDE and the plugin share come out the same, so the library loads in that IDE.
+
+It needs two secrets of the organization: `READ_TOKEN` (reads `atelier-ide-org/app`) and `RELEASES_TOKEN` (writes the releases of `atelier-ide-org/releases`).
+
 ## Develop
 
-The plugin is a git submodule of the IDE, at `plugins/gltf-viewer` of `atelier-ide-org/app`, and a member of its workspace: the IDE's CI builds it and publishes it with each release. Work on it there:
+Clone the plugin into the `plugins/` folder of the IDE (ignored by its git, a member of its workspace):
 
 ```sh
-git clone --recursive git@github.com:atelier-ide-org/app.git
+git clone git@github.com:atelier-ide-org/app.git
+git clone git@github.com:atelier-ide-org/plugin-gltf-viewer.git app/plugins/gltf-viewer
 cd app/plugins/gltf-viewer
 cargo test
 ```
@@ -32,7 +39,7 @@ To try it in a project, build the IDE and the plugin together, then install the 
 ./plugins/gltf-viewer/install.sh /path/to/project --debug    # for `cargo run`
 ```
 
-On its own, this repository only runs its tests (`cargo test`, and the CI). A new version is a tag (`vX.Y.Z`); the IDE moves its submodule to it.
+On its own, this repository runs its tests (`cargo test`, and the CI).
 
 ## Layout
 

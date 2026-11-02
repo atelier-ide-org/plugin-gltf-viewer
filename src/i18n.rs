@@ -7,10 +7,13 @@ use atelier_plugin_api::Locales;
 use std::sync::{LazyLock, RwLock};
 
 static LOCALES: LazyLock<Locales> = LazyLock::new(|| {
-    Locales::new(&[
-        ("en_US", include_str!("../locales/en_US.json")),
-        ("fr_FR", include_str!("../locales/fr_FR.json")),
-    ])
+    Locales::new(
+        [
+            ("en_US", include_str!("../locales/en_US.json")),
+            ("fr_FR", include_str!("../locales/fr_FR.json")),
+        ]
+        .map(|(language, json)| (language, serde_json::from_str(json).unwrap_or_default())),
+    )
 });
 
 static LANGUAGE: RwLock<String> = RwLock::new(String::new());
