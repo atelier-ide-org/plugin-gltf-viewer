@@ -6,13 +6,13 @@ It was a built-in plugin of the IDE; this repository keeps its history.
 
 ## Install
 
-Each release of Atelier (from 0.2.0) gets this plugin, built like it: take `gltf-viewer-<os>-<arch>` from **the release of the IDE you run**, in [atelier-ide-org/releases](https://github.com/atelier-ide-org/releases/releases), and extract it into `<project>/.atelier/plugins/gltf-viewer/`. In Atelier, open **Plugins**, click **Reload** and enable **3D Model Viewer**.
+Each release of Atelier (from 0.2.0) gets this plugin, built like it: take `gltf-viewer-<os>-<arch>` from the release `plugins/gltf-viewer/vX.Y.Z` of [atelier-ide-org/releases](https://github.com/atelier-ide-org/releases/releases), where X.Y.Z is **the version of the IDE you run**, and extract it into `<project>/.atelier/plugins/gltf-viewer/`. In Atelier, open **Plugins**, click **Reload** and enable **3D Model Viewer**.
 
 A library built anywhere else is refused by the IDE: Rust has no stable ABI, so the plugin must be built by the same compiler, with the same crates and features as the IDE (see [plugin-api](https://github.com/atelier-ide-org/plugin-api)).
 
 ## Releases
 
-The IDE never waits for this plugin: its releases are published without it. Then the **Release** workflow of this repository (`.github/workflows/release.yml`, every six hours or by hand for a tag) takes the code of the IDE at the tag of the release, puts the plugin in its `plugins/` folder and runs the command that built the IDE, then adds `gltf-viewer-<os>-<arch>` and `gltf-viewer-SHA256SUMS` to that release. The crates the IDE and the plugin share come out the same, so the library loads in that IDE.
+The IDE never waits for this plugin: its releases are published without it. Then the **Release** workflow of this repository (`.github/workflows/release.yml`, every six hours or by hand for a tag) takes the code of the IDE at the tag of the release, puts the plugin in its `plugins/` folder and runs the command that built the IDE, then publishes `gltf-viewer-<os>-<arch>` and `gltf-viewer-SHA256SUMS` as the release `plugins/gltf-viewer/vX.Y.Z` (the IDE's being `app/vX.Y.Z`), never marked as the latest one of the repository. The crates the IDE and the plugin share come out the same, so the library loads in that IDE.
 
 It needs two secrets of the organization: `READ_TOKEN` (reads `atelier-ide-org/app`) and `RELEASES_TOKEN` (writes the releases of `atelier-ide-org/releases`).
 

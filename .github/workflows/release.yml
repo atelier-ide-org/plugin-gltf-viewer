@@ -1,17 +1,19 @@
 name: Release
 
-# Builds the plugin for a release of Atelier and adds it to that release, in
-# atelier-ide-org/releases: `gltf-viewer-<os>-<arch>.zip` / `.tar.gz` (the manifest and the
-# library) and `gltf-viewer-SHA256SUMS`.
+# Builds the plugin for a release of Atelier and publishes it in atelier-ide-org/releases, as the
+# release `plugins/gltf-viewer/vX.Y.Z` (X.Y.Z: the version of the IDE it loads in, whose release is
+# `app/vX.Y.Z`): `gltf-viewer-<os>-<arch>.zip` / `.tar.gz` (the manifest and the library) and
+# `gltf-viewer-SHA256SUMS`. It is never the "latest" release of the repository: that one is the
+# IDE's, which the site links to.
 #
 # A native plugin loads only in the IDE it was built like (same compiler, profile and crates, see
 # atelier-ide-org/plugin-api). So this workflow takes the code of the IDE at the tag of the
 # release, puts the plugin in its `plugins/` folder, a member of its workspace, and runs the very
 # command that built the IDE: the crates the IDE and the plugin share come out the same. The IDE
-# never waits for its plugins: its release is published first, the plugin joins it afterwards.
+# never waits for its plugins: its release is published first, the plugin follows.
 #
-# Every six hours, it looks for the latest release of the IDE without this plugin. Started by
-# hand, it builds for the tag given (again, to replace the files of a release).
+# Every six hours, it looks for the latest release of the IDE that has no release of this plugin
+# yet. Started by hand, it builds for the version given (again, to replace its files).
 #
 # Secrets (of the organization): READ_TOKEN reads atelier-ide-org/app, which is private;
 # RELEASES_TOKEN writes the releases of atelier-ide-org/releases.
@@ -22,7 +24,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: The release of Atelier to build for (vX.Y.Z)
+        description: The version of Atelier to build for (vX.Y.Z)
         required: true
         type: string
 
@@ -50,13 +52,20 @@ jobs:
           READ_TOKEN: ${{ secrets.READ_TOKEN }}
           WANTED: ${{ inputs.tag }}
         run: |
+          # `tag`: the version of the IDE (vX.Y.Z), which is also its tag in atelier-ide-org/app.
           if [ -n "$WANTED" ]; then
             tag="$WANTED"
           else
-            release=$(gh release view --repo atelier-ide-org/releases --json tagName,assets)
-            tag=$(echo "$release" | jq -r .tagName)
-            if echo "$release" | jq -e --arg p "$PLUGIN-" '.assets[] | select(.name | startswith($p))' > /dev/null; then
-              echo "$tag already has $PLUGIN."
+            # The latest published release of the IDE: `app/vX.Y.Z`.
+            tag=$(gh release list --repo atelier-ide-org/releases --exclude-drafts --exclude-pre-releases \
+                --limit 100 --json tagName --jq '.[].tagName | select(startswith("app/")) | ltrimstr("app/")' \
+              | sort -V | tail -1)
+            if [ -z "$tag" ]; then
+              echo "No release of the IDE yet."
+              exit 0
+            fi
+            if gh release view "plugins/$PLUGIN/$tag" --repo atelier-ide-org/releases > /dev/null 2>&1; then
+              echo "$PLUGIN is already released for $tag."
               exit 0
             fi
           fi
@@ -149,16 +158,32 @@ jobs:
     needs: [find, build]
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v7
+        with:
+          path: plugin
       - uses: actions/download-artifact@v8
         with:
           path: dist
           merge-multiple: true
-      - name: Add to the release
+      - name: Publish
         env:
           GH_TOKEN: ${{ secrets.RELEASES_TOKEN }}
-          TAG: ${{ needs.find.outputs.tag }}
+          VERSION: ${{ needs.find.outputs.tag }}
         run: |
+          tag="plugins/$PLUGIN/$VERSION"
+          plugin_version="$(sed -n 's/^version = "\(.*\)"/\1/p' plugin/Cargo.toml | head -1)"
+          name="$(jq -r .name plugin/plugin.json)"
           cd dist
           sha256sum "$PLUGIN"-* > "$PLUGIN-SHA256SUMS"
           cat "$PLUGIN-SHA256SUMS"
-          gh release upload "$TAG" ./* --clobber --repo atelier-ide-org/releases
+          if gh release view "$tag" --repo atelier-ide-org/releases > /dev/null 2>&1; then
+            gh release upload "$tag" ./* --clobber --repo atelier-ide-org/releases
+            exit 0
+          fi
+          printf '%s\n' \
+            "$name $plugin_version ($PLUGIN), built for **Atelier ${VERSION#v}** (release \`app/$VERSION\`): it loads in that version of the IDE only." \
+            "" \
+            "Extract \`$PLUGIN-<os>-<arch>\` into \`.atelier/plugins/$PLUGIN/\` of your project, then in Atelier open **Plugins**, click **Reload** and enable it." \
+            > ../notes.md
+          gh release create "$tag" ./* --repo atelier-ide-org/releases --latest=false \
+            --title "$name $plugin_version for Atelier ${VERSION#v}" --notes-file ../notes.md
