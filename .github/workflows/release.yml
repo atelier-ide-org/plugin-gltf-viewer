@@ -2,9 +2,9 @@ name: Release
 
 # Builds the plugin for a release of Atelier and publishes it in atelier-ide-org/releases, as the
 # release `plugins/gltf-viewer/vX.Y.Z` (X.Y.Z: the version of the IDE it loads in, whose release is
-# `app/vX.Y.Z`): `gltf-viewer-<os>-<arch>.zip` / `.tar.gz` (the manifest and the library) and
-# `gltf-viewer-SHA256SUMS`. It is never the "latest" release of the repository: that one is the
-# IDE's, which the site links to.
+# `app/vX.Y.Z`): `gltf-viewer.atelier-plugin`, the file Atelier installs (the manifest and the
+# library of each system), and `gltf-viewer-SHA256SUMS`. It is never the "latest" release of the
+# repository: that one is the IDE's, which the site links to.
 #
 # A native plugin loads only in the IDE it was built like (same compiler, profile and crates, see
 # atelier-ide-org/plugin-api). So this workflow takes the code of the IDE at the tag of the
@@ -131,26 +131,21 @@ jobs:
         run: cargo build --release --workspace --target ${{ matrix.target }}
 
       - name: Package
+        # The library of this system, in the folder the IDE looks in: `<os>-<arch>/`.
         run: |
           case "${{ matrix.os_name }}" in
             windows) file="$LIBRARY.dll" ;;
             macos) file="lib$LIBRARY.dylib" ;;
             *) file="lib$LIBRARY.so" ;;
           esac
-          name="$PLUGIN-${{ matrix.os_name }}-${{ matrix.arch }}"
-          mkdir -p dist/stage
-          cp "app/plugins/$PLUGIN/plugin.json" "app/target/${{ matrix.target }}/release/$file" dist/stage/
-          if [ "${{ matrix.os_name }}" = "windows" ]; then
-            (cd dist/stage && 7z a -tzip "../$name.zip" ./*)
-          else
-            tar -czf "dist/$name.tar.gz" -C dist/stage .
-          fi
-          rm -r dist/stage
+          dir="dist/${{ matrix.os_name }}-${{ matrix.arch }}"
+          mkdir -p "$dir"
+          cp "app/target/${{ matrix.target }}/release/$file" "$dir/"
 
       - uses: actions/upload-artifact@v7
         with:
           name: ${{ env.PLUGIN }}-${{ matrix.os_name }}-${{ matrix.arch }}
-          path: dist/*
+          path: dist/
           if-no-files-found: error
           retention-days: 7
 
@@ -163,8 +158,20 @@ jobs:
           path: plugin
       - uses: actions/download-artifact@v8
         with:
-          path: dist
+          path: stage
           merge-multiple: true
+      # One file for every system: `gltf-viewer.atelier-plugin`, a zip of the manifest (with the
+      # version of Atelier it is built for) and of the library of each system. Atelier installs it
+      # with Plugins › Install a plugin from a file.
+      - name: Package
+        env:
+          VERSION: ${{ needs.find.outputs.tag }}
+        run: |
+          jq --arg v "${VERSION#v}" '. + { atelier: $v }' plugin/plugin.json > stage/plugin.json
+          mkdir -p dist
+          (cd stage && zip -r "../dist/$PLUGIN.atelier-plugin" .)
+          unzip -l "dist/$PLUGIN.atelier-plugin"
+          (cd dist && sha256sum "$PLUGIN.atelier-plugin" > "$PLUGIN-SHA256SUMS" && cat "$PLUGIN-SHA256SUMS")
       - name: Publish
         env:
           GH_TOKEN: ${{ secrets.RELEASES_TOKEN }}
@@ -174,8 +181,6 @@ jobs:
           plugin_version="$(sed -n 's/^version = "\(.*\)"/\1/p' plugin/Cargo.toml | head -1)"
           name="$(jq -r .name plugin/plugin.json)"
           cd dist
-          sha256sum "$PLUGIN"-* > "$PLUGIN-SHA256SUMS"
-          cat "$PLUGIN-SHA256SUMS"
           if gh release view "$tag" --repo atelier-ide-org/releases > /dev/null 2>&1; then
             gh release upload "$tag" ./* --clobber --repo atelier-ide-org/releases
             exit 0
@@ -183,7 +188,7 @@ jobs:
           printf '%s\n' \
             "$name $plugin_version ($PLUGIN), built for **Atelier ${VERSION#v}** (release \`app/$VERSION\`): it loads in that version of the IDE only." \
             "" \
-            "Extract \`$PLUGIN-<os>-<arch>\` into \`.atelier/plugins/$PLUGIN/\` of your project, then in Atelier open **Plugins**, click **Reload** and enable it." \
+            "Download \`$PLUGIN.atelier-plugin\`, then in Atelier open **Plugins** and click **Install a plugin from a file** (the + button). It is installed once, for every project." \
             > ../notes.md
           gh release create "$tag" ./* --repo atelier-ide-org/releases --latest=false \
             --title "$name $plugin_version for Atelier ${VERSION#v}" --notes-file ../notes.md
