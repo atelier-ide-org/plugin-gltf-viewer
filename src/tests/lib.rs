@@ -2,15 +2,16 @@ use super::*;
 
 #[test]
 fn models_are_recognized_and_have_no_layout_switch() {
-    let plugin = GltfPlugin::default();
+    let mut plugin = GltfPlugin::default();
     assert!(plugin.opens_binary(Path::new("assets/Robot.GLB")));
     assert!(plugin.opens_binary(Path::new("scene.gltf")));
     assert!(!plugin.opens_binary(Path::new("scene.obj")));
-    assert_eq!(
-        plugin.editor_layout(Path::new("x.glb")),
-        Some(EditorLayout::Preview)
-    );
-    assert!(!plugin.layout_switch(Path::new("x.glb")));
+    let info = plugin.info("en_US");
+    let files = &info.file_types[0];
+    assert_eq!(files.extensions, ["glb", "gltf"]);
+    assert_eq!(files.layout, protocol::Layout::Preview);
+    assert!(files.binary && !files.layout_switch);
+    assert_eq!(files.icon.as_deref(), Some(info.icons[0].name.as_str()));
 }
 
 #[test]

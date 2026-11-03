@@ -1,4 +1,4 @@
-//! The GPU side of the model viewer: an OpenGL paint callback of egui_glow.
+//! The GPU side of the model viewer: an OpenGL paint callback, with the context of the IDE.
 //!
 //! The model is drawn into a framebuffer of its own, with a depth buffer and multisampling, then
 //! copied into the window where egui laid out the viewer: the window needs neither a depth
@@ -6,7 +6,11 @@
 //! first time it is drawn, and freed at the next frame once its tab is closed.
 
 use super::scene::{Alpha, Draw, Scene, Wrap};
-use atelier_plugin_api::{egui, egui_glow, glow, glow::HasContext};
+use atelier_plugin_api::{
+    egui,
+    gl::{self, ShaderVersion},
+    glow::{self, HasContext},
+};
 use glam::{Mat4, Vec3};
 use std::{
     collections::HashMap,
@@ -169,14 +173,11 @@ impl Gpu {
 
 /// The paint callback that draws `frame` in `rect`.
 pub fn callback(gpu: Arc<Mutex<Gpu>>, rect: egui::Rect, frame: Frame) -> egui::PaintCallback {
-    egui::PaintCallback {
-        rect,
-        callback: Arc::new(egui_glow::CallbackFn::new(move |info, painter| {
-            let mut gpu = gpu.lock().unwrap();
-            // SAFETY: called by egui_glow on its thread, with its context current.
-            unsafe { gpu.paint(painter.gl(), &info, &frame) };
-        })),
-    }
+    gl::paint_callback(rect, move |info, gl| {
+        let mut gpu = gpu.lock().unwrap();
+        // SAFETY: called by the IDE on the thread of its painter, with its context current.
+        unsafe { gpu.paint(gl, info, &frame) };
+    })
 }
 
 fn as_bytes(floats: &[f32]) -> &[u8] {
@@ -191,7 +192,7 @@ fn index_bytes(indices: &[u32]) -> &[u8] {
 
 unsafe fn compile(gl: &glow::Context) -> Result<Program, String> {
     unsafe {
-        let version = egui_glow::ShaderVersion::get(gl);
+        let version = ShaderVersion::get(gl);
         if !version.is_new_shader_interface() {
             return Err(tr!("gltf.opengl_too_old"));
         }
