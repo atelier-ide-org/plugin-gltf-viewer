@@ -1,8 +1,12 @@
 {
   "id": "gltf-viewer",
   "name": "3D Model Viewer",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "glTF and GLB models shown in 3D, with their animations.",
   "library": "gltf_viewer",
-  "abi": 2
+  "abi": 2,
+  "extensions": [
+    "glb",
+    "gltf"
+  ]
 }

@@ -379,7 +379,7 @@ impl GltfPlugin {
         let has_animation = !scene.animations.is_empty();
         if has_animation {
             let (icon, tip) = if model.player.playing {
-                ("media/icons/pause", tr!("gltf.pause"))
+                ("gltf/pause", tr!("gltf.pause"))
             } else {
                 ("run", tr!("gltf.play"))
             };
@@ -490,6 +490,18 @@ impl GltfPlugin {
     }
 }
 
+/// Gives the icons of the plugin to `ui`, which finds them by name as those of the IDE.
+fn register_icons() {
+    static DONE: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+    DONE.get_or_init(|| {
+        ui::register_icon(
+            "gltf/pause",
+            include_str!("../icons/pause.svg"),
+            Some(include_str!("../icons/pause.dark.svg")),
+        );
+    });
+}
+
 atelier_plugin_api::export_plugin!(GltfPlugin::default);
 
 impl GltfPlugin {
@@ -501,6 +513,7 @@ impl GltfPlugin {
 impl Plugin for GltfPlugin {
     fn info(&mut self, language: &str) -> protocol::Info {
         i18n::set_language(language);
+        register_icons();
         protocol::Info {
             file_types: vec![protocol::FileType {
                 extensions: vec!["glb".into(), "gltf".into()],
@@ -511,7 +524,7 @@ impl Plugin for GltfPlugin {
             }],
             icons: vec![protocol::Icon {
                 name: "model".into(),
-                svg: include_str!("../model.svg").into(),
+                svg: include_str!("../extensions/glb+gltf.svg").into(),
                 svg_dark: None,
             }],
             ..Default::default()
@@ -525,6 +538,7 @@ impl Plugin for GltfPlugin {
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, surface: Surface<'_>, _host: &Host) {
+        register_icons();
         if let Surface::Preview(path) = surface {
             self.preview(ui, path);
         }
