@@ -5,7 +5,7 @@
 //! draw (see `render.rs`).
 
 use glam::{Mat4, Quat, Vec3};
-use std::path::Path;
+use std::{path::Path, sync::Mutex};
 
 pub struct Target {
     pub positions: Vec<Vec3>,
@@ -75,11 +75,36 @@ pub enum Wrap {
     Mirror,
 }
 
-pub struct Texture {
+/// A picture of the file, decoded once however many textures show it.
+pub struct Image {
     pub width: u32,
     pub height: u32,
-    /// sRGB, 8 bits per channel.
-    pub rgba: Vec<u8>,
+    /// sRGB, 8 bits per channel. Emptied once the GPU has it ([`Scene::release_pixels`]): the
+    /// pixels of a model weighed as much again in memory as on the GPU, for nothing.
+    pixels: Mutex<Vec<u8>>,
+}
+
+impl Image {
+    pub fn new(width: u32, height: u32, pixels: Vec<u8>) -> Self {
+        Self {
+            width,
+            height,
+            pixels: Mutex::new(pixels),
+        }
+    }
+
+    /// Calls `f` with the pixels, or None once they were released (or are not whole).
+    pub fn with_pixels<R>(&self, f: impl FnOnce(Option<&[u8]>) -> R) -> R {
+        let pixels = self.pixels.lock().unwrap_or_else(|e| e.into_inner());
+        let whole = pixels.len() == self.width as usize * self.height as usize * 4;
+        f(whole.then_some(pixels.as_slice()))
+    }
+}
+
+/// A texture of a material: a picture and the way it is sampled.
+pub struct Texture {
+    /// Index in [`Scene::images`]; None when the file has not the picture.
+    pub image: Option<usize>,
     pub wrap: [Wrap; 2],
     pub nearest: bool,
 }
@@ -141,6 +166,7 @@ pub struct Scene {
     pub meshes: Vec<Mesh>,
     pub skins: Vec<Skin>,
     pub materials: Vec<Material>,
+    pub images: Vec<Image>,
     pub textures: Vec<Texture>,
     pub animations: Vec<Animation>,
     pub triangles: usize,
@@ -211,12 +237,12 @@ fn rgba(image: &gltf::image::Data) -> Vec<u8> {
     };
     let mut out = Vec::with_capacity((image.width * image.height * 4) as usize);
     for pixel in pixels.chunks_exact(channels * size) {
-        let c: Vec<u8> = pixel.chunks_exact(size).map(channel).collect();
+        let c = |i: usize| channel(&pixel[i * size..(i + 1) * size]);
         out.extend_from_slice(&match channels {
-            1 => [c[0], c[0], c[0], 255],
-            2 => [c[0], c[0], c[0], c[1]],
-            3 => [c[0], c[1], c[2], 255],
-            _ => [c[0], c[1], c[2], c[3]],
+            1 => [c(0), c(0), c(0), 255],
+            2 => [c(0), c(0), c(0), c(1)],
+            3 => [c(0), c(1), c(2), 255],
+            _ => [c(0), c(1), c(2), c(3)],
         });
     }
     out
@@ -281,15 +307,19 @@ impl Scene {
         buffers: &[gltf::buffer::Data],
         images: &[gltf::image::Data],
     ) -> Result<Self, String> {
+        // Each picture once: two textures often show the same one (a base color and an
+        // emissive map), and it was decoded, kept and sent to the GPU twice.
+        let decoded: Vec<Image> = images
+            .iter()
+            .map(|image| Image::new(image.width, image.height, rgba(image)))
+            .collect();
         let textures = document
             .textures()
             .map(|texture| {
                 let sampler = texture.sampler();
-                let image = images.get(texture.source().index());
+                let index = texture.source().index();
                 Texture {
-                    width: image.map_or(1, |i| i.width),
-                    height: image.map_or(1, |i| i.height),
-                    rgba: image.map_or_else(|| vec![255; 4], rgba),
+                    image: (index < decoded.len()).then_some(index),
                     wrap: [wrap(sampler.wrap_s()), wrap(sampler.wrap_t())],
                     nearest: sampler.mag_filter() == Some(gltf::texture::MagFilter::Nearest),
                 }
@@ -527,6 +557,7 @@ impl Scene {
             meshes,
             skins,
             materials,
+            images: decoded,
             textures,
             animations,
             triangles: triangle_count,
@@ -535,6 +566,13 @@ impl Scene {
     }
 
     /// The node tree at `time` seconds of `animation`, or at rest.
+    /// Frees the pixels of the pictures, once the GPU has them.
+    pub fn release_pixels(&self) {
+        for image in &self.images {
+            *image.pixels.lock().unwrap_or_else(|e| e.into_inner()) = Vec::new();
+        }
+    }
+
     pub fn pose(&self, animation: Option<usize>, time: f32) -> Pose {
         let mut local: Vec<(Vec3, Quat, Vec3)> = self
             .nodes

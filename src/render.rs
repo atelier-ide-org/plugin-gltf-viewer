@@ -35,6 +35,9 @@ pub struct Frame {
     pub grid: Arc<Vec<f32>>,
 }
 
+/// Pixels of a viewer past which it is drawn with 2 samples instead of 4 (about 1920 × 1150).
+const MSAA_PIXELS: i64 = 2_200_000;
+
 /// Floats a vertex: position, normal, texture coordinates, color.
 const STRIDE: usize = 12;
 
@@ -134,7 +137,10 @@ struct Primitive {
 
 struct Model {
     primitives: Vec<Vec<Primitive>>,
+    /// The GPU texture of each texture of the scene, shared by those that show the same picture.
     textures: Vec<glow::Texture>,
+    /// Each GPU texture once, to free them.
+    owned: Vec<glow::Texture>,
     grid: Option<(glow::VertexArray, glow::Buffer, i32, usize)>,
 }
 
@@ -264,24 +270,48 @@ unsafe fn attributes(gl: &glow::Context, dynamic: glow::Buffer, fixed: Option<gl
     }
 }
 
+/// What makes two textures of a scene one on the GPU: their picture and how it is sampled.
+type TextureKey = (Option<usize>, [Wrap; 2], bool);
+
 unsafe fn upload(gl: &glow::Context, scene: &Scene) -> Result<Model, String> {
     unsafe {
+        // One GPU texture for each picture and way of sampling it: the textures of a file that
+        // show the same picture the same way share it.
+        let mut owned: Vec<(TextureKey, glow::Texture)> = Vec::new();
         let mut textures = Vec::new();
         for texture in &scene.textures {
+            let key = (texture.image, texture.wrap, texture.nearest);
+            if let Some((_, id)) = owned.iter().find(|(k, _)| *k == key) {
+                textures.push(*id);
+                continue;
+            }
             let id = gl.create_texture()?;
             gl.bind_texture(glow::TEXTURE_2D, Some(id));
             gl.pixel_store_i32(glow::UNPACK_ALIGNMENT, 1);
-            gl.tex_image_2d(
-                glow::TEXTURE_2D,
-                0,
-                glow::RGBA8 as i32,
-                texture.width as i32,
-                texture.height as i32,
-                0,
-                glow::RGBA,
-                glow::UNSIGNED_BYTE,
-                glow::PixelUnpackData::Slice(Some(&texture.rgba)),
-            );
+            let image = texture.image.and_then(|i| scene.images.get(i));
+            // White when the file has not the picture, or when its pixels were already sent
+            // and let go.
+            let white = [255u8; 4];
+            let upload_image = |width: u32, height: u32, pixels: &[u8]| {
+                gl.tex_image_2d(
+                    glow::TEXTURE_2D,
+                    0,
+                    glow::RGBA8 as i32,
+                    width as i32,
+                    height as i32,
+                    0,
+                    glow::RGBA,
+                    glow::UNSIGNED_BYTE,
+                    glow::PixelUnpackData::Slice(Some(pixels)),
+                );
+            };
+            match image {
+                Some(image) => image.with_pixels(|pixels| match pixels {
+                    Some(pixels) => upload_image(image.width, image.height, pixels),
+                    None => upload_image(1, 1, &white),
+                }),
+                None => upload_image(1, 1, &white),
+            }
             gl.generate_mipmap(glow::TEXTURE_2D);
             let wrap = |w: Wrap| match w {
                 Wrap::Repeat => glow::REPEAT,
@@ -304,6 +334,7 @@ unsafe fn upload(gl: &glow::Context, scene: &Scene) -> Result<Model, String> {
             };
             gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MIN_FILTER, min as i32);
             gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_MAG_FILTER, mag as i32);
+            owned.push((key, id));
             textures.push(id);
         }
         gl.bind_texture(glow::TEXTURE_2D, None);
@@ -360,6 +391,7 @@ unsafe fn upload(gl: &glow::Context, scene: &Scene) -> Result<Model, String> {
         Ok(Model {
             primitives,
             textures,
+            owned: owned.into_iter().map(|(_, id)| id).collect(),
             grid: None,
         })
     }
@@ -373,7 +405,7 @@ unsafe fn free(gl: &glow::Context, model: Model) {
             gl.delete_buffer(p.fixed);
             gl.delete_buffer(p.indices);
         }
-        for t in model.textures {
+        for t in model.owned {
             gl.delete_texture(t);
         }
         if let Some((vao, buffer, _, _)) = model.grid {
@@ -395,7 +427,15 @@ unsafe fn free_target(gl: &glow::Context, t: Target) {
 
 unsafe fn target(gl: &glow::Context, size: [i32; 2]) -> Result<Target, String> {
     unsafe {
-        let samples = gl.get_parameter_i32(glow::MAX_SAMPLES).clamp(0, 4);
+        // 4 samples, 2 past MSAA_PIXELS: the multisampled buffers of a large viewer weighed
+        // over 60 MB more, kept by the driver in the memory of the IDE, for edges that are
+        // hard to tell apart at that size.
+        let wanted = if size[0] as i64 * size[1] as i64 > MSAA_PIXELS {
+            2
+        } else {
+            4
+        };
+        let samples = gl.get_parameter_i32(glow::MAX_SAMPLES).clamp(0, wanted);
         let storage = |samples: i32, format: u32| -> Result<glow::Renderbuffer, String> {
             let rb = gl.create_renderbuffer()?;
             gl.bind_renderbuffer(glow::RENDERBUFFER, Some(rb));
@@ -492,6 +532,8 @@ impl Gpu {
                 match upload(gl, &frame.scene) {
                     Ok(model) => {
                         e.insert(model);
+                        // The GPU has the pictures: their pixels can go.
+                        frame.scene.release_pixels();
                     }
                     Err(e) => {
                         self.program = Some(Err(e));

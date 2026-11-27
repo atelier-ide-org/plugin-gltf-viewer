@@ -240,3 +240,54 @@ fn strips_and_fans_become_triangle_lists() {
 fn a_file_that_is_not_gltf_is_an_error() {
     assert!(load_slice(b"not a model").is_err());
 }
+
+/// A red and green picture of 2 × 2 pixels, as a PNG file.
+const PNG: [u8; 73] = [
+    137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 2, 0, 0, 0, 2, 8, 6, 0,
+    0, 0, 114, 182, 13, 36, 0, 0, 0, 16, 73, 68, 65, 84, 120, 156, 99, 248, 207, 192, 240, 31, 10,
+    33, 20, 0, 69, 204, 7, 249, 102, 203, 255, 57, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130,
+];
+
+/// A triangle whose material shows the same picture twice: as its base color and its glow.
+fn textured_triangle() -> Vec<u8> {
+    let mut bin = floats(&[0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0]); // 0..36
+    bin.extend(PNG); // 36..109
+    let document = json!({
+        "asset": { "version": "2.0" },
+        "scene": 0,
+        "scenes": [{ "nodes": [0] }],
+        "nodes": [{ "mesh": 0 }],
+        "meshes": [{ "primitives": [{ "attributes": { "POSITION": 0 }, "material": 0 }] }],
+        "materials": [{
+            "pbrMetallicRoughness": { "baseColorTexture": { "index": 0 } },
+            "emissiveTexture": { "index": 1 },
+        }],
+        "textures": [{ "source": 0 }, { "source": 0 }],
+        "images": [{ "bufferView": 1, "mimeType": "image/png" }],
+        "accessors": [{
+            "bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3",
+            "min": [0.0, 0.0, 0.0], "max": [1.0, 1.0, 0.0],
+        }],
+        "bufferViews": [
+            { "buffer": 0, "byteOffset": 0, "byteLength": 36 },
+            { "buffer": 0, "byteOffset": 36, "byteLength": 73 },
+        ],
+    });
+    glb(document, bin)
+}
+
+#[test]
+fn a_picture_shown_by_two_textures_is_decoded_once_and_let_go_once_sent() {
+    let scene = load_slice(&textured_triangle()).unwrap();
+    assert_eq!(scene.images.len(), 1, "one picture, not one per texture");
+    assert_eq!(scene.textures.len(), 2);
+    assert!(scene.textures.iter().all(|t| t.image == Some(0)));
+    let image = &scene.images[0];
+    assert_eq!((image.width, image.height), (2, 2));
+    image.with_pixels(|pixels| {
+        assert_eq!(&pixels.unwrap()[..8], &[255, 0, 0, 255, 0, 255, 0, 255]);
+    });
+    // Once the GPU has them, the pixels are freed; a texture sent again would be white.
+    scene.release_pixels();
+    image.with_pixels(|pixels| assert!(pixels.is_none()));
+}
